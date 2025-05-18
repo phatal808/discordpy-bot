@@ -1,5 +1,5 @@
 ---
-title: Discord Python bot
+title: Discord reaction bot
 description: A Discord bot written in Python
 tags:
   - python
@@ -20,7 +20,7 @@ This example starts a Discord bot using [discord.py](https://discordpy.readthedo
 ## 💁‍♀️ How to use
 
 - Install packages using `pip install -r requirements.txt`
-- Start the bot using `python main.py`
+- Start the bot using `python reaction_bot.py`
 
 ## 📝 Notes
 
