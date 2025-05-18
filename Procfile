@@ -1,1 +1,1 @@
-web: python reaction_boy.py
+web: python reaction_bot.py
