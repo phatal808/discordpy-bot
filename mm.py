@@ -13,16 +13,10 @@ REQUIRES
 ────────
 Python ≥ 3.9   discord.py ≥ 2.4
 Message Content Intent must be enabled in the Dev Portal **and** in code.
-
-Railway setup
-─────────────
-$ railway volume create data 1GB
-$ railway variables set DISCORD_TOKEN=...
-$ python mm.py
 """
 from __future__ import annotations
 import os, json, logging, sys
-from typing import Dict, Any, Literal
+from typing import Dict, Any
 
 import discord
 from discord.ext import commands
@@ -85,37 +79,49 @@ def has_admin(inter: discord.Interaction) -> bool:
 admin_check = app_commands.check(lambda i: has_admin(i))
 
 # ───────────── Slash commands ────────────
+CHOICES_ACTION = [
+    app_commands.Choice(name="reaction", value="reaction"),
+    app_commands.Choice(name="reply",    value="reply"),
+]
+
 @app_commands.command(name="addtrigger", description="Add or update a trigger phrase → action")
 @admin_check
 @app_commands.describe(
     phrase="Text to look for (case‑insensitive)",
-    action="reaction or reply",
-    emoji="Emoji when action=reaction",
+    action="Choose ‘reaction’ or ‘reply’",
+    emoji="Emoji used when action=reaction",
     response="Reply text when action=reply",
 )
+@app_commands.choices(action=CHOICES_ACTION)
 async def add_trigger(
     interaction: discord.Interaction,
     phrase: str,
-    action: Literal["reaction", "reply"],
+    action: str,
     emoji: discord.PartialEmoji | None = None,
     response: str | None = None,
 ):
     await interaction.response.defer(thinking=True, ephemeral=True)
     phrase = phrase.lower().strip()
+    act = action  # value already provided as str via choices
+
     data = get_guild_entry(interaction.guild)
     triggers = data["triggers"]
 
-    if action == "reaction" and emoji is None:
+    if act == "reaction" and emoji is None:
         return await interaction.followup.send("You must supply an emoji for a reaction trigger.")
-    if action == "reply" and response is None:
+    if act == "reply" and response is None:
         return await interaction.followup.send("You must supply response text for a reply trigger.")
 
     if phrase not in triggers and len(triggers) >= PHRASE_LIMIT:
         return await interaction.followup.send(f"Trigger limit ({PHRASE_LIMIT}) reached.")
 
-    triggers[phrase] = {"type": action, "emoji": str(emoji) if action == "reaction" else None, "response": response}
+    triggers[phrase] = {
+        "type": act,
+        "emoji": str(emoji) if act == "reaction" else None,
+        "response": response if act == "reply" else None,
+    }
     save_data(GUILD_DATA)
-    await interaction.followup.send(f"✅ Trigger ‘{phrase}’ set to {action}.")
+    await interaction.followup.send(f"✅ Trigger ‘{phrase}’ set to {act}.")
 
 @app_commands.command(name="removetrigger", description="Delete a trigger phrase")
 @admin_check
@@ -144,10 +150,10 @@ async def setadminrole(interaction: discord.Interaction, role: discord.Role):
     save_data(GUILD_DATA)
     await interaction.response.send_message(f"✅ Admin role set to {role.mention}.", ephemeral=True)
 
-# Group commands
+# Group commands for tidy UI
 trigger_group = app_commands.Group(name="trigger", description="Trigger management")
-for cmd in (add_trigger, removetrigger, listtriggers):
-    trigger_group.add_command(cmd)
+for _cmd in (add_trigger, removetrigger, listtriggers):
+    trigger_group.add_command(_cmd)
 
 bot.tree.add_command(trigger_group)
 bot.tree.add_command(setadminrole)
