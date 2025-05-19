@@ -175,7 +175,10 @@ async def on_message(msg: discord.Message):
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user} ({bot.user.id})")
-    await bot.tree.sync()
+
+    TEST_GUILD = discord.Object(id=818087104633765889)   # ← replace with your server ID
+    await bot.tree.sync(guild=TEST_GUILD)                # instant, per-guild
+    # await bot.tree.sync()                              # (leave this for global rollout)
     logger.info("Slash commands synced.")
 
 if __name__ == "__main__":
