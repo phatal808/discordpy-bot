@@ -59,8 +59,9 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, description="Memento Mori Bot")
 
 # ───────── Permission helper ─────────────
-
 def has_admin(i: discord.Interaction) -> bool:
+    if i.user.guild_permissions.administrator:
+        return True                        # ← add this
     entry = get_entry(i.guild)
     rid = entry.get("admin_role")
     if rid:
