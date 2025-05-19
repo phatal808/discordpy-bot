@@ -7,5 +7,4 @@ discord.py==2.4.0
 frozenlist==1.3.3
 idna==3.4
 multidict==6.0.3
-python==3.9
 yarl==1.8.2
