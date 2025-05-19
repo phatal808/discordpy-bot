@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
 """
-Memento Mori Bot – slash‑command driven reaction / reply trigger bot
-────────────────────────────────────────────────────────────────────
-This version fixes the slash‑command parameter definition so Discord can
-extract choices correctly.
+Memento Mori Bot – slash‑command driven reaction/reply trigger bot
+================================================================
+Stable version using **typing.Literal** for the `action` parameter, which
+Discord.py handles natively as an enum‑like choice list. This removes the
+conflicting `@app_commands.choices` decorator that caused the build crash.
 
 • Per‑guild trigger maps stored in `/data/triggers.json` (Railway volume)
 • Admin‑only slash commands (`/trigger …`, `/setadminrole`)
-• One action per phrase: *reaction* (emoji) **or** *reply* (text)
+• One action per phrase: *reaction* (emoji) or *reply* (text)
 """
 from __future__ import annotations
 import os, json, logging, sys
-from typing import Dict, Any
+from typing import Dict, Any, Literal
 
 import discord
 from discord.ext import commands
 from discord import app_commands
 
+# ───────────────── Config ─────────────────
 PHRASE_LIMIT = 100
-DATA_DIR = os.getenv("DATA_DIR", "/data")
+DATA_DIR  = os.getenv("DATA_DIR", "/data")
 DATA_FILE = os.path.join(DATA_DIR, "triggers.json")
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -26,7 +28,7 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("memento_mori")
 
-# ───────────────── Persistence ─────────────────
+# ─────────── Persistence helpers ─────────
 
 def load_data() -> Dict[str, Any]:
     try:
@@ -35,7 +37,7 @@ def load_data() -> Dict[str, Any]:
     except FileNotFoundError:
         return {}
     except json.JSONDecodeError:
-        logger.warning("triggers.json corrupt – starting fresh")
+        logger.warning("⚠️ triggers.json corrupt – starting fresh")
         return {}
 
 def save_data(data: Dict[str, Any]):
@@ -52,7 +54,7 @@ def get_entry(guild: discord.Guild) -> Dict[str, Any]:
         GUILD_DATA[gid] = {"admin_role": None, "triggers": {}}
     return GUILD_DATA[gid]
 
-# ───────────────── Bot setup ─────────────────
+# ─────────────── Bot setup ───────────────
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     sys.exit("❌ DISCORD_TOKEN missing")
@@ -61,7 +63,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, description="Memento Mori Bot")
 
-# ───────────── Permission helper ────────────
+# ───────── Permission helper ─────────────
 
 def has_admin(i: discord.Interaction) -> bool:
     entry = get_entry(i.guild)
@@ -74,50 +76,43 @@ def has_admin(i: discord.Interaction) -> bool:
 admin_check = app_commands.check(has_admin)
 
 # ────────────── Slash commands ──────────────
-CHOICES = [
-    app_commands.Choice(name="reaction", value="reaction"),
-    app_commands.Choice(name="reply", value="reply"),
-]
-
-@app_commands.command(name="addtrigger", description="Add/overwrite a trigger")
+@app_commands.command(name="addtrigger", description="Add or update a trigger")
 @admin_check
 @app_commands.describe(
     phrase="Text to watch for (case‑insensitive)",
-    action="Select reaction or reply",
-    emoji="Emoji if action=reaction",
-    response="Reply text if action=reply",
+    action="Choose ‘reaction’ or ‘reply’",
+    emoji="Emoji to react with when action=reaction",
+    response="Reply text when action=reply",
 )
-@app_commands.choices(action=CHOICES)
 async def addtrigger(
     interaction: discord.Interaction,
     phrase: str,
-    action: app_commands.Choice[str],  # <-- FIXED: Choice type
+    action: Literal["reaction", "reply"],
     emoji: discord.PartialEmoji | None = None,
     response: str | None = None,
 ):
     await interaction.response.defer(thinking=True, ephemeral=True)
     phrase = phrase.lower().strip()
-    act = action.value  # now get value
 
     entry = get_entry(interaction.guild)
     triggers = entry["triggers"]
 
-    if act == "reaction" and emoji is None:
+    if action == "reaction" and emoji is None:
         return await interaction.followup.send("You must supply an emoji.")
-    if act == "reply" and response is None:
+    if action == "reply" and response is None:
         return await interaction.followup.send("You must supply reply text.")
     if phrase not in triggers and len(triggers) >= PHRASE_LIMIT:
         return await interaction.followup.send(f"Trigger limit {PHRASE_LIMIT} reached.")
 
     triggers[phrase] = {
-        "type": act,
-        "emoji": str(emoji) if act == "reaction" else None,
-        "response": response if act == "reply" else None,
+        "type": action,
+        "emoji": str(emoji) if action == "reaction" else None,
+        "response": response if action == "reply" else None,
     }
     save_data(GUILD_DATA)
-    await interaction.followup.send(f"✅ ‘{phrase}’ now triggers {act}.")
+    await interaction.followup.send(f"✅ ‘{phrase}’ now triggers {action}.")
 
-@app_commands.command(name="removetrigger", description="Remove a trigger")
+@app_commands.command(name="removetrigger", description="Delete a trigger")
 @admin_check
 async def removetrigger(interaction: discord.Interaction, phrase: str):
     phrase = phrase.lower().strip()
@@ -144,12 +139,12 @@ async def setadminrole(interaction: discord.Interaction, role: discord.Role):
     save_data(GUILD_DATA)
     await interaction.response.send_message(f"Admin role set to {role.mention}", ephemeral=True)
 
-# group
-grp = app_commands.Group(name="trigger", description="Trigger management")
+# group for tidy UI
+trigger_grp = app_commands.Group(name="trigger", description="Trigger management")
 for cmd in (addtrigger, removetrigger, listtriggers):
-    grp.add_command(cmd)
+    trigger_grp.add_command(cmd)
 
-bot.tree.add_command(grp)
+bot.tree.add_command(trigger_grp)
 bot.tree.add_command(setadminrole)
 
 # ─────────── Message listener ────────────
