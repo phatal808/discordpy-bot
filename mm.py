@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """
-Memento Mori Bot – slash‑command driven reaction/reply trigger bot
-================================================================
-Stable version using **typing.Literal** for the `action` parameter, which
-Discord.py handles natively as an enum‑like choice list. This removes the
-conflicting `@app_commands.choices` decorator that caused the build crash.
-
-• Per‑guild trigger maps stored in `/data/triggers.json` (Railway volume)
-• Admin‑only slash commands (`/trigger …`, `/setadminrole`)
-• One action per phrase: *reaction* (emoji) or *reply* (text)
+Memento Mori Bot – slash‑command reaction/reply trigger bot
+==========================================================
+Fix: replace unsupported `discord.PartialEmoji` annotation in slash command
+with plain `str`. We convert the supplied emoji string to a
+`discord.PartialEmoji` at runtime.
 """
 from __future__ import annotations
 import os, json, logging, sys
@@ -18,9 +14,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-# ───────────────── Config ─────────────────
 PHRASE_LIMIT = 100
-DATA_DIR  = os.getenv("DATA_DIR", "/data")
+DATA_DIR = os.getenv("DATA_DIR", "/data")
 DATA_FILE = os.path.join(DATA_DIR, "triggers.json")
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -81,14 +76,14 @@ admin_check = app_commands.check(has_admin)
 @app_commands.describe(
     phrase="Text to watch for (case‑insensitive)",
     action="Choose ‘reaction’ or ‘reply’",
-    emoji="Emoji to react with when action=reaction",
+    emoji="Emoji string when action=reaction",
     response="Reply text when action=reply",
 )
 async def addtrigger(
     interaction: discord.Interaction,
     phrase: str,
     action: Literal["reaction", "reply"],
-    emoji: discord.PartialEmoji | None = None,
+    emoji: str | None = None,
     response: str | None = None,
 ):
     await interaction.response.defer(thinking=True, ephemeral=True)
@@ -97,16 +92,25 @@ async def addtrigger(
     entry = get_entry(interaction.guild)
     triggers = entry["triggers"]
 
-    if action == "reaction" and emoji is None:
-        return await interaction.followup.send("You must supply an emoji.")
-    if action == "reply" and response is None:
-        return await interaction.followup.send("You must supply reply text.")
+    if action == "reaction":
+        if emoji is None:
+            return await interaction.followup.send("You must supply an emoji string.")
+        try:
+            parsed_emoji = discord.PartialEmoji.from_str(emoji)
+        except Exception:
+            return await interaction.followup.send("Invalid emoji format.")
+        emoji_str = str(parsed_emoji)
+    else:
+        if response is None:
+            return await interaction.followup.send("You must supply reply text.")
+        emoji_str = None
+
     if phrase not in triggers and len(triggers) >= PHRASE_LIMIT:
         return await interaction.followup.send(f"Trigger limit {PHRASE_LIMIT} reached.")
 
     triggers[phrase] = {
         "type": action,
-        "emoji": str(emoji) if action == "reaction" else None,
+        "emoji": emoji_str,
         "response": response if action == "reply" else None,
     }
     save_data(GUILD_DATA)
@@ -139,7 +143,7 @@ async def setadminrole(interaction: discord.Interaction, role: discord.Role):
     save_data(GUILD_DATA)
     await interaction.response.send_message(f"Admin role set to {role.mention}", ephemeral=True)
 
-# group for tidy UI
+# group
 trigger_grp = app_commands.Group(name="trigger", description="Trigger management")
 for cmd in (addtrigger, removetrigger, listtriggers):
     trigger_grp.add_command(cmd)
