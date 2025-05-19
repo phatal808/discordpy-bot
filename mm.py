@@ -16,38 +16,37 @@ Message Content Intent must be enabled in the Dev Portal **and** in code.
 
 Railway setup
 ─────────────
-$ railway volume create data 1GB          # one‑off, attaches at /data
-$ export DISCORD_TOKEN=...               # or railway variables set
-$ python mm.py                           # start command (same in deploy)
+$ railway volume create data 1GB
+$ railway variables set DISCORD_TOKEN=...
+$ python mm.py
 """
 from __future__ import annotations
 import os, json, logging, sys
-from typing import Dict, Any
+from typing import Dict, Any, Literal
 
 import discord
 from discord.ext import commands
 from discord import app_commands
 
-# ─────────────────────────── Config ────────────────────────────
+# ───────────────── Config ─────────────────
 PHRASE_LIMIT = 100
 DATA_DIR  = os.getenv("DATA_DIR", "/data")
 DATA_FILE = os.path.join(DATA_DIR, "triggers.json")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# ─────────────────────── Logging setup ────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("memento_mori")
 
-# ───────────────────── Persistence helpers ────────────────────
+# ─────────── Persistence helpers ─────────
 
 def load_data() -> Dict[str, Any]:
-    if not os.path.isfile(DATA_FILE):
-        return {}
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as fp:
             return json.load(fp)
-    except (IOError, json.JSONDecodeError):
-        logger.warning("Could not read triggers.json – starting fresh")
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        logger.warning("⚠️  triggers.json corrupted – starting fresh")
         return {}
 
 def save_data(data: Dict[str, Any]):
@@ -64,55 +63,47 @@ def get_guild_entry(guild: discord.Guild) -> Dict[str, Any]:
         GUILD_DATA[gid] = {"admin_role": None, "triggers": {}}
     return GUILD_DATA[gid]
 
-# ─────────────────────────── Bot setup ─────────────────────────
+# ─────────────── Bot setup ───────────────
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     sys.exit("❌  DISCORD_TOKEN environment variable is missing.")
 
 intents = discord.Intents.default()
 intents.message_content = True
-
 bot = commands.Bot(command_prefix="!", intents=intents, description="Memento Mori Bot")
 
-# ───────────────────── Permission helper ──────────────────────
+# ───────── Permission helper ─────────────
 
-def has_admin_role(inter: discord.Interaction) -> bool:
-    entry = get_guild_entry(inter.guild)
-    role_id = entry.get("admin_role")
+def has_admin(inter: discord.Interaction) -> bool:
+    data = get_guild_entry(inter.guild)
+    role_id = data.get("admin_role")
     if role_id:
         role = inter.guild.get_role(role_id)
         return role in inter.user.roles
     return inter.user.guild_permissions.manage_guild
 
-admin_check = app_commands.check(lambda i: has_admin_role(i))
+admin_check = app_commands.check(lambda i: has_admin(i))
 
-# ───────────────────────── Slash commands ─────────────────────
-
+# ───────────── Slash commands ────────────
 @app_commands.command(name="addtrigger", description="Add or update a trigger phrase → action")
 @admin_check
 @app_commands.describe(
     phrase="Text to look for (case‑insensitive)",
     action="reaction or reply",
-    emoji="Emoji to use when action=reaction",
+    emoji="Emoji when action=reaction",
     response="Reply text when action=reply",
-)
-@app_commands.choices(
-    action=[
-        app_commands.Choice(name="reaction", value="reaction"),
-        app_commands.Choice(name="reply",    value="reply"),
-    ]
 )
 async def add_trigger(
     interaction: discord.Interaction,
     phrase: str,
-    action: str,
+    action: Literal["reaction", "reply"],
     emoji: discord.PartialEmoji | None = None,
     response: str | None = None,
 ):
     await interaction.response.defer(thinking=True, ephemeral=True)
     phrase = phrase.lower().strip()
-    entry = get_guild_entry(interaction.guild)
-    triggers = entry["triggers"]
+    data = get_guild_entry(interaction.guild)
+    triggers = data["triggers"]
 
     if action == "reaction" and emoji is None:
         return await interaction.followup.send("You must supply an emoji for a reaction trigger.")
@@ -122,9 +113,7 @@ async def add_trigger(
     if phrase not in triggers and len(triggers) >= PHRASE_LIMIT:
         return await interaction.followup.send(f"Trigger limit ({PHRASE_LIMIT}) reached.")
 
-    triggers[phrase] = (  # compact JSON
-        {"type": "reaction", "emoji": str(emoji)} if action == "reaction" else {"type": "reply", "response": response}
-    )
+    triggers[phrase] = {"type": action, "emoji": str(emoji) if action == "reaction" else None, "response": response}
     save_data(GUILD_DATA)
     await interaction.followup.send(f"✅ Trigger ‘{phrase}’ set to {action}.")
 
@@ -132,8 +121,8 @@ async def add_trigger(
 @admin_check
 async def removetrigger(interaction: discord.Interaction, phrase: str):
     phrase = phrase.lower().strip()
-    entry = get_guild_entry(interaction.guild)
-    removed = entry["triggers"].pop(phrase, None)
+    data = get_guild_entry(interaction.guild)
+    removed = data["triggers"].pop(phrase, None)
     save_data(GUILD_DATA)
     msg = f"🗑️ Trigger ‘{phrase}’ removed." if removed else "That phrase was not registered."
     await interaction.response.send_message(msg, ephemeral=True)
@@ -141,21 +130,21 @@ async def removetrigger(interaction: discord.Interaction, phrase: str):
 @app_commands.command(name="listtriggers", description="List all trigger phrases in this server")
 @admin_check
 async def listtriggers(interaction: discord.Interaction):
-    entry = get_guild_entry(interaction.guild)
-    if not entry["triggers"]:
+    data = get_guild_entry(interaction.guild)
+    if not data["triggers"]:
         return await interaction.response.send_message("No triggers set.", ephemeral=True)
-    lines = [f"• **{p}** → {info['type']}" for p, info in entry["triggers"].items()]
+    lines = [f"• **{p}** → {info['type']}" for p, info in data["triggers"].items()]
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 @app_commands.command(name="setadminrole", description="Choose which role can manage triggers in this server")
 @admin_check
 async def setadminrole(interaction: discord.Interaction, role: discord.Role):
-    entry = get_guild_entry(interaction.guild)
-    entry["admin_role"] = role.id
+    data = get_guild_entry(interaction.guild)
+    data["admin_role"] = role.id
     save_data(GUILD_DATA)
     await interaction.response.send_message(f"✅ Admin role set to {role.mention}.", ephemeral=True)
 
-# Add commands to a group for cleaner UI
+# Group commands
 trigger_group = app_commands.Group(name="trigger", description="Trigger management")
 for cmd in (add_trigger, removetrigger, listtriggers):
     trigger_group.add_command(cmd)
@@ -163,27 +152,27 @@ for cmd in (add_trigger, removetrigger, listtriggers):
 bot.tree.add_command(trigger_group)
 bot.tree.add_command(setadminrole)
 
-# ─────────────────────── Message listener ─────────────────────
+# ─────────── Message listener ────────────
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
-    entry = get_guild_entry(message.guild)
-    if not entry["triggers"]:
+    data = get_guild_entry(message.guild)
+    if not data["triggers"]:
         return
     content = message.content.lower()
-    for phrase, info in entry["triggers"].items():
+    for phrase, info in data["triggers"].items():
         if phrase in content:
             if info["type"] == "reaction":
                 try:
                     await message.add_reaction(info["emoji"])
                 except discord.HTTPException as exc:
                     logger.warning(f"Failed to react: {exc}")
-            else:  # reply
+            else:
                 await message.reply(info["response"], mention_author=False)
-            break  # only first match
+            break
 
-# ───────────────────────── Ready event ────────────────────────
+# ───────────── Ready event ───────────────
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user} (ID {bot.user.id})")
@@ -193,6 +182,6 @@ async def on_ready():
     except Exception as exc:
         logger.error(f"Failed to sync commands: {exc}")
 
-# ─────────────────────────── Run bot ──────────────────────────
+# ─────────────── Run bot ────────────────
 if __name__ == "__main__":
     bot.run(TOKEN)
