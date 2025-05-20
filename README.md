@@ -1,5 +1,5 @@
 ---
-title: Discord Reaction bot
+title: Discord Reaction/FAQ bot
 description: A Discord bot written in Python
 tags:
   - python
@@ -21,7 +21,21 @@ This example starts a Discord bot using [discord.py](https://discordpy.readthedo
 
 - Install packages using `pip install -r requirements.txt`
 - Start the bot using `python mm.py`
+- Admin always has access create phrases however a role will be needed for anyone else
 
-## 📝 Notes
+## Usage ##
 
-This is a basic bot with the prefix `!`, more information can be founded at their [offical documentation](https://discordpy.readthedocs.io/en/stable/api.html).
+-   /trigger
+
+-   subtriggers:
+-   /addtrigger
+-   Example usage: /addtrigger phrase:"hello there" action:reaction emoji:"👋"
+-   Example usage: /addtrigger phrase:"gm" action:reply response:"Good morning ☀️"
+-   
+-   /listtriggers
+-   /removetrigger
+
+## 📝 Notes ##
+
+-  supports external emojis
+-  supports animated emojis
